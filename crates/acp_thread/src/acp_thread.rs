@@ -3,11 +3,12 @@ mod diff;
 mod mention;
 mod terminal;
 
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT};
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
 use language::language_settings::FormatOnSave;
+use language_model::LanguageModelRegistry;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,12 @@ const DEFAULT_CONTEXT_LIMIT: usize = 100_000;
 
 // Number of recent entries to keep during condensation (preserve last 2-3 exchanges)
 const RECENT_ENTRIES_TO_KEEP: usize = 6;
+
+// Token estimate for tool calls (smaller than messages)
+const TOOL_CALL_TOKEN_ESTIMATE: usize = 20;
+
+// Temperature for summary generation
+const SUMMARY_GENERATION_TEMPERATURE: f32 = 0.7;
 
 #[derive(Debug)]
 pub struct UserMessage {
@@ -1321,7 +1328,7 @@ impl AcpThread {
                         .sum::<usize>(),
                     AgentThreadEntry::ToolCall(_) => {
                         // Tool calls contribute but less than messages
-                        20 // Fixed small size for tool calls
+                        TOOL_CALL_TOKEN_ESTIMATE
                     }
                 };
                 content_len / CHARS_PER_TOKEN
@@ -1355,9 +1362,6 @@ impl AcpThread {
 
     /// Generate a condensed summary of the conversation
     fn generate_condensed_summary(&self, cx: &mut Context<Self>) -> Task<Result<String>> {
-        use language_model::LanguageModelRegistry;
-        use agent_settings::SUMMARIZE_THREAD_DETAILED_PROMPT;
-
         let registry = LanguageModelRegistry::read_global(cx);
         let Some(configured_model) = registry.thread_summary_model() else {
             return Task::ready(Err(anyhow::anyhow!("No thread summary model configured")));
@@ -1392,7 +1396,7 @@ impl AcpThread {
                 tools: vec![],
                 tool_choice: None,
                 stop: vec![],
-                temperature: Some(0.7),
+                temperature: Some(SUMMARY_GENERATION_TEMPERATURE),
                 thinking_allowed: false,
             };
 
@@ -1433,6 +1437,10 @@ impl AcpThread {
             cx,
         );
         
+        // Note: The 'chunks' field contains a simplified marker text for the raw message,
+        // while 'content' contains the full formatted summary for display.
+        // This is intentional - chunks represents the original content blocks sent to the agent,
+        // while content is the rendered UI representation.
         let summary_entry = AgentThreadEntry::UserMessage(UserMessage {
             id: None,
             content: summary_block,
