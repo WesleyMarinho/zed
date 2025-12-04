@@ -1379,14 +1379,21 @@ impl AcpThread {
 
         cx.spawn(async move |_this, cx| {
             let request = language_model::LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                intent: None,
+                mode: None,
                 messages: vec![language_model::LanguageModelRequestMessage {
                     role: language_model::Role::User,
                     content: vec![language_model::MessageContent::Text(prompt)],
                     cache: false,
+                    reasoning_details: None,
                 }],
                 tools: vec![],
+                tool_choice: None,
                 stop: vec![],
                 temperature: Some(0.7),
+                thinking_allowed: false,
             };
 
             let mut response_stream = model.stream_completion(request, &cx).await?;
