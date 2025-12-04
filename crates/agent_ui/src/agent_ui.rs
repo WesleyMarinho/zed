@@ -170,6 +170,35 @@ impl ExternalAgent {
         }
     }
 
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::Gemini => "gemini".to_string(),
+            Self::ClaudeCode => "claude-code".to_string(),
+            Self::Codex => "codex".to_string(),
+            Self::NativeAgent => "native".to_string(),
+            Self::Custom { name } => name.to_string(),
+        }
+    }
+
+    pub fn from_string(s: &str) -> Option<Self> {
+        match s {
+            "gemini" => Some(Self::Gemini),
+            "claude-code" => Some(Self::ClaudeCode),
+            "codex" => Some(Self::Codex),
+            "native" => Some(Self::NativeAgent),
+            // Treat other strings as custom agent names with validation
+            // Custom agent names must be alphanumeric with hyphens/underscores
+            // and reasonable length to prevent injection or storage issues
+            name if !name.is_empty() 
+                && name.len() <= 64 
+                && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') => {
+                Some(Self::Custom { name: name.into() })
+            }
+            // Return None for invalid inputs
+            _ => None,
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,

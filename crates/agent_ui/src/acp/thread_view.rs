@@ -580,7 +580,7 @@ impl AcpThreadView {
                         if let Some(resume) = resume_thread {
                             this.history_store.update(cx, |history, cx| {
                                 history.push_recently_opened_entry(
-                                    HistoryEntryId::AcpThread(resume.id),
+                                    HistoryEntryId::AcpThread(resume.id, resume.agent_type),
                                     cx,
                                 );
                             });
@@ -1096,9 +1096,12 @@ impl AcpThreadView {
             // TODO: Implement full auto-condensation flow
         }
 
+        let agent_type = crate::ExternalAgent::parse_built_in(self.agent.as_ref())
+            .map(|agent| agent.to_string());
+
         self.history_store.update(cx, |history, cx| {
             history.push_recently_opened_entry(
-                HistoryEntryId::AcpThread(thread.read(cx).session_id().clone()),
+                HistoryEntryId::AcpThread(thread.read(cx).session_id().clone(), agent_type),
                 cx,
             );
         });

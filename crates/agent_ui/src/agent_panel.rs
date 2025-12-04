@@ -865,7 +865,18 @@ impl AgentPanel {
                     agent
                 }
                 None => {
-                    if is_via_collab {
+                    // Check if resuming a thread with a stored agent type
+                    if let Some(ref resume_meta) = resume_thread {
+                        if let Some(ref agent_type_str) = resume_meta.agent_type {
+                            if let Some(agent) = ExternalAgent::from_string(agent_type_str) {
+                                agent
+                            } else {
+                                ExternalAgent::NativeAgent
+                            }
+                        } else {
+                            ExternalAgent::NativeAgent
+                        }
+                    } else if is_via_collab {
                         ExternalAgent::NativeAgent
                     } else {
                         cx.background_spawn(async move {
