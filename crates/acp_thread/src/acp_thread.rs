@@ -1326,9 +1326,11 @@ impl AcpThread {
                             AssistantMessageChunk::Thought { block } => block.to_markdown(cx).len(),
                         })
                         .sum::<usize>(),
-                    AgentThreadEntry::ToolCall(_) => {
-                        // Tool calls contribute but less than messages
-                        TOOL_CALL_TOKEN_ESTIMATE
+                    AgentThreadEntry::ToolCall(tool_call) => {
+                        // Estimate based on actual tool call content
+                        let markdown_len = tool_call.to_markdown(cx).len();
+                        // Use at least the minimum estimate if markdown is empty
+                        markdown_len.max(TOOL_CALL_TOKEN_ESTIMATE)
                     }
                 };
                 content_len / CHARS_PER_TOKEN
@@ -1355,7 +1357,8 @@ impl AcpThread {
 
         let usage = self.estimate_token_usage(cx);
         let limit = self.context_limit();
-        let threshold = settings.auto_condense_threshold;
+        // Clamp threshold to valid range [0.0, 1.0]
+        let threshold = settings.auto_condense_threshold.clamp(0.0, 1.0);
         
         (usage as f32 / limit as f32) >= threshold
     }
@@ -1437,15 +1440,14 @@ impl AcpThread {
             cx,
         );
         
-        // Note: The 'chunks' field contains a simplified marker text for the raw message,
-        // while 'content' contains the full formatted summary for display.
-        // This is intentional - chunks represents the original content blocks sent to the agent,
-        // while content is the rendered UI representation.
+        // Both chunks and content contain the summary so that if this message is used
+        // in future context, the agent gets the full summary rather than just a marker.
+        let summary_text = format!("**[Context Summary - Previous conversation condensed]**\n\n{}", summary);
         let summary_entry = AgentThreadEntry::UserMessage(UserMessage {
             id: None,
             content: summary_block,
             chunks: vec![acp::ContentBlock::Text {
-                text: format!("[Context condensed - summary of previous {} messages]", split_point),
+                text: summary_text,
             }],
             checkpoint: None,
         });
