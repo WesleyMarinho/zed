@@ -88,6 +88,12 @@ pub trait AgentServer: Send {
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+
+    /// Get the estimated context window limit for this agent in tokens
+    /// Returns None if the limit is unknown or unlimited
+    fn context_limit(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl dyn AgentServer {

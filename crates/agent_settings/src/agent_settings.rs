@@ -45,6 +45,8 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
+    pub auto_condense_enabled: bool,
+    pub auto_condense_threshold: f32,
 }
 
 impl AgentSettings {
@@ -177,6 +179,8 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
+            auto_condense_enabled: agent.auto_condense_enabled.unwrap_or(true),
+            auto_condense_threshold: agent.auto_condense_threshold.unwrap_or(0.8),
         }
     }
 }

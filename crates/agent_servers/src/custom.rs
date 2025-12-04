@@ -155,4 +155,9 @@ impl crate::AgentServer for CustomAgentServer {
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
         self
     }
+
+    fn context_limit(&self) -> Option<u64> {
+        // Conservative default for custom agents
+        Some(100_000)
+    }
 }

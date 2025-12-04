@@ -126,4 +126,9 @@ impl AgentServer for Codex {
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
+
+    fn context_limit(&self) -> Option<u64> {
+        // GPT-4 variants typically have 128k token context window
+        Some(128_000)
+    }
 }

@@ -82,6 +82,11 @@ impl AgentServer for Gemini {
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
+
+    fn context_limit(&self) -> Option<u64> {
+        // Gemini 1.5 has a very large context window (up to 2M tokens for Pro)
+        Some(1_000_000)
+    }
 }
 
 #[cfg(test)]

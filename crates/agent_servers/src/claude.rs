@@ -124,4 +124,9 @@ impl AgentServer for ClaudeCode {
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
+
+    fn context_limit(&self) -> Option<u64> {
+        // Claude 3.5 Sonnet has a 200k token context window
+        Some(200_000)
+    }
 }

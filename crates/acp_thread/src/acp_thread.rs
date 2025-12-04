@@ -838,6 +838,8 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    estimated_token_count: u64,
+    condensation_in_progress: bool,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1068,6 +1070,8 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
+            estimated_token_count: 0,
+            condensation_in_progress: false,
         }
     }
 
@@ -1109,6 +1113,59 @@ impl AcpThread {
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.token_usage.as_ref()
+    }
+
+    /// Estimate the number of tokens used in the conversation
+    /// Uses rough approximation: 4 characters ≈ 1 token
+    pub fn estimate_token_count(&self, cx: &App) -> u64 {
+        let mut total = 0u64;
+        
+        // Estimate tokens from all entries
+        for entry in &self.entries {
+            match entry {
+                AgentThreadEntry::UserMessage(message) => {
+                    // Estimate tokens from content
+                    total += (message.content.to_markdown(cx).len() / 4) as u64;
+                }
+                AgentThreadEntry::AssistantMessage(message) => {
+                    for chunk in &message.chunks {
+                        match chunk {
+                            AssistantMessageChunk::Message { block } | 
+                            AssistantMessageChunk::Thought { block } => {
+                                total += (block.to_markdown(cx).len() / 4) as u64;
+                            }
+                        }
+                    }
+                }
+                AgentThreadEntry::ToolCall(tool_call) => {
+                    // Estimate tokens from tool call input/output
+                    if let Some(input) = &tool_call.raw_input {
+                        total += (input.len() / 4) as u64;
+                    }
+                    if let Some(output) = &tool_call.raw_output {
+                        total += (output.len() / 4) as u64;
+                    }
+                }
+            }
+        }
+        
+        total
+    }
+
+    pub fn condensation_in_progress(&self) -> bool {
+        self.condensation_in_progress
+    }
+
+    pub fn set_condensation_in_progress(&mut self, in_progress: bool) {
+        self.condensation_in_progress = in_progress;
+    }
+
+    pub fn update_estimated_token_count(&mut self, cx: &App) {
+        self.estimated_token_count = self.estimate_token_count(cx);
+    }
+
+    pub fn estimated_token_count(&self) -> u64 {
+        self.estimated_token_count
     }
 
     pub fn has_pending_edit_tool_calls(&self) -> bool {

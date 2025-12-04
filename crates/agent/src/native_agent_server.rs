@@ -75,6 +75,12 @@ impl AgentServer for NativeAgentServer {
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
+
+    fn context_limit(&self) -> Option<u64> {
+        // Native agent context limit depends on the selected model
+        // Return None to use the model's actual reported token usage
+        None
+    }
 }
 
 #[cfg(test)]
