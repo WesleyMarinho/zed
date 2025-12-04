@@ -180,7 +180,10 @@ impl Settings for AgentSettings {
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             auto_condense_enabled: agent.auto_condense_enabled.unwrap_or(true),
-            auto_condense_threshold: agent.auto_condense_threshold.unwrap_or(0.8),
+            auto_condense_threshold: agent
+                .auto_condense_threshold
+                .unwrap_or(0.8)
+                .clamp(0.0, 1.0),
         }
     }
 }

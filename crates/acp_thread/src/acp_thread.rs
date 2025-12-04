@@ -1115,8 +1115,11 @@ impl AcpThread {
         self.token_usage.as_ref()
     }
 
-    /// Estimate the number of tokens used in the conversation
-    /// Uses rough approximation: 4 characters ≈ 1 token
+    /// Estimate the number of tokens used in the conversation.
+    /// Uses rough approximation: 4 characters ≈ 1 token.
+    /// Note: This is a rough approximation and may not be accurate for all tokenizers.
+    /// Different models use different tokenization strategies, and this approximation
+    /// could be significantly off for non-English text or code.
     pub fn estimate_token_count(&self, cx: &App) -> u64 {
         let mut total = 0u64;
         

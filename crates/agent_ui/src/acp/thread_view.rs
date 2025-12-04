@@ -1027,7 +1027,7 @@ impl AcpThreadView {
         .detach();
     }
 
-    fn check_and_trigger_auto_condensation(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn check_auto_condensation_needed(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let settings = AgentSettings::get_global(cx);
         
         // Skip if auto-condensation is disabled
@@ -1062,9 +1062,8 @@ impl AcpThreadView {
         
         // Check if we've exceeded the threshold
         if ratio >= settings.auto_condense_threshold {
-            // Trigger condensation by creating a new thread with summary
-            // For now, we'll just log this and return true to indicate we need condensation
-            log::info!(
+            // Log warning about approaching context limit
+            log::warn!(
                 "Auto-condensation triggered: {}/{} tokens ({:.1}% of limit)",
                 estimated_tokens,
                 max_tokens,
@@ -1091,7 +1090,7 @@ impl AcpThreadView {
         }
 
         // Check if auto-condensation should be triggered
-        if self.check_and_trigger_auto_condensation(window, cx) {
+        if self.check_auto_condensation_needed(window, cx) {
             // For now, just show a warning - full implementation would create a new thread with summary
             log::warn!("Context limit approaching - auto-condensation needed but not yet fully implemented");
             // TODO: Implement full auto-condensation flow
