@@ -875,6 +875,7 @@ impl Thread {
             }),
             completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
+            agent_type: Some("native".to_string()),
         };
 
         cx.background_spawn(async move {

@@ -170,6 +170,26 @@ impl ExternalAgent {
         }
     }
 
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::Gemini => "gemini".to_string(),
+            Self::ClaudeCode => "claude-code".to_string(),
+            Self::Codex => "codex".to_string(),
+            Self::NativeAgent => "native".to_string(),
+            Self::Custom { name } => name.to_string(),
+        }
+    }
+
+    pub fn from_string(s: &str) -> Option<Self> {
+        match s {
+            "gemini" => Some(Self::Gemini),
+            "claude-code" => Some(Self::ClaudeCode),
+            "codex" => Some(Self::Codex),
+            "native" => Some(Self::NativeAgent),
+            name => Some(Self::Custom { name: name.into() }),
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,

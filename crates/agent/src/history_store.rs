@@ -63,7 +63,7 @@ impl HistoryEntry {
 
     pub fn id(&self) -> HistoryEntryId {
         match self {
-            HistoryEntry::AcpThread(thread) => HistoryEntryId::AcpThread(thread.id.clone()),
+            HistoryEntry::AcpThread(thread) => HistoryEntryId::AcpThread(thread.id.clone(), thread.agent_type.clone()),
             HistoryEntry::TextThread(text_thread) => {
                 HistoryEntryId::TextThread(text_thread.path.clone())
             }
@@ -100,14 +100,14 @@ impl HistoryEntry {
 /// Generic identifier for a history entry.
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum HistoryEntryId {
-    AcpThread(acp::SessionId),
+    AcpThread(acp::SessionId, Option<String>),
     TextThread(Arc<Path>),
 }
 
 impl Into<ElementId> for HistoryEntryId {
     fn into(self) -> ElementId {
         match self {
-            HistoryEntryId::AcpThread(session_id) => ElementId::Name(session_id.0.into()),
+            HistoryEntryId::AcpThread(session_id, _) => ElementId::Name(session_id.0.into()),
             HistoryEntryId::TextThread(path) => ElementId::Path(path),
         }
     }
@@ -115,7 +115,7 @@ impl Into<ElementId> for HistoryEntryId {
 
 #[derive(Serialize, Deserialize, Debug)]
 enum SerializedRecentOpen {
-    AcpThread(String),
+    AcpThread { id: String, agent_type: Option<String> },
     TextThread(String),
 }
 
@@ -232,7 +232,7 @@ impl HistoryStore {
                         .rev()
                     {
                         this.push_recently_opened_entry(
-                            HistoryEntryId::AcpThread(thread.id.clone()),
+                            HistoryEntryId::AcpThread(thread.id.clone(), thread.agent_type.clone()),
                             cx,
                         )
                     }
@@ -279,7 +279,7 @@ impl HistoryStore {
                 .iter()
                 .enumerate()
                 .flat_map(|(index, entry)| match entry {
-                    HistoryEntryId::AcpThread(id) if &thread.id == id => {
+                    HistoryEntryId::AcpThread(id, _) if &thread.id == id => {
                         Some((index, HistoryEntry::AcpThread(thread.clone())))
                     }
                     _ => None,
@@ -319,8 +319,11 @@ impl HistoryStore {
                 HistoryEntryId::TextThread(path) => path.file_name().map(|file| {
                     SerializedRecentOpen::TextThread(file.to_string_lossy().into_owned())
                 }),
-                HistoryEntryId::AcpThread(id) => {
-                    Some(SerializedRecentOpen::AcpThread(id.to_string()))
+                HistoryEntryId::AcpThread(id, agent_type) => {
+                    Some(SerializedRecentOpen::AcpThread { 
+                        id: id.to_string(),
+                        agent_type: agent_type.clone(),
+                    })
                 }
             })
             .collect::<Vec<_>>();
@@ -354,8 +357,8 @@ impl HistoryStore {
                 .into_iter()
                 .take(MAX_RECENTLY_OPENED_ENTRIES)
                 .flat_map(|entry| match entry {
-                    SerializedRecentOpen::AcpThread(id) => {
-                        Some(HistoryEntryId::AcpThread(acp::SessionId::new(id.as_str())))
+                    SerializedRecentOpen::AcpThread { id, agent_type } => {
+                        Some(HistoryEntryId::AcpThread(acp::SessionId::new(id.as_str()), agent_type))
                     }
                     SerializedRecentOpen::TextThread(file_name) => Some(
                         HistoryEntryId::TextThread(text_threads_dir().join(file_name).into()),
@@ -377,7 +380,7 @@ impl HistoryStore {
 
     pub fn remove_recently_opened_thread(&mut self, id: acp::SessionId, cx: &mut Context<Self>) {
         self.recently_opened_entries.retain(
-            |entry| !matches!(entry, HistoryEntryId::AcpThread(thread_id) if thread_id == &id),
+            |entry| !matches!(entry, HistoryEntryId::AcpThread(thread_id, _) if thread_id == &id),
         );
         self.save_recently_opened_entries(cx);
     }
