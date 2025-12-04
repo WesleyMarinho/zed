@@ -312,7 +312,8 @@ impl ThreadsDatabase {
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
         // Add migration for existing databases - only if column doesn't exist
-        // Check if column exists by querying table info
+        // This check runs once per application startup and is very fast (microseconds)
+        // It ensures proper migration without version tracking complexity
         let has_agent_type_column = {
             let mut check = connection.select_bound::<String, (String,)>(indoc! {"
                 SELECT name FROM pragma_table_info('threads') WHERE name = ?

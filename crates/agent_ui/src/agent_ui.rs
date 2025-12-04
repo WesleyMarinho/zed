@@ -186,10 +186,15 @@ impl ExternalAgent {
             "claude-code" => Some(Self::ClaudeCode),
             "codex" => Some(Self::Codex),
             "native" => Some(Self::NativeAgent),
-            // Treat other non-empty strings as custom agent names
-            // This supports custom agents installed via extensions
-            name if !name.is_empty() => Some(Self::Custom { name: name.into() }),
-            // Return None for empty strings or invalid inputs
+            // Treat other strings as custom agent names with validation
+            // Custom agent names must be alphanumeric with hyphens/underscores
+            // and reasonable length to prevent injection or storage issues
+            name if !name.is_empty() 
+                && name.len() <= 64 
+                && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') => {
+                Some(Self::Custom { name: name.into() })
+            }
+            // Return None for invalid inputs
             _ => None,
         }
     }
