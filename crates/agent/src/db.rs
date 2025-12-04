@@ -29,6 +29,8 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub agent_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +52,8 @@ pub struct DbThread {
     pub completion_mode: Option<CompletionMode>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
+    #[serde(default)]
+    pub agent_type: Option<String>,
 }
 
 impl DbThread {
@@ -301,10 +305,29 @@ impl ThreadsDatabase {
                 summary TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 data_type TEXT NOT NULL,
-                data BLOB NOT NULL
+                data BLOB NOT NULL,
+                agent_type TEXT
             )
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
+
+        // Add migration for existing databases - only if column doesn't exist
+        // This check runs once per application startup and is very fast (microseconds)
+        // It ensures proper migration without version tracking complexity
+        let has_agent_type_column = {
+            let mut check = connection.select_bound::<String, (String,)>(indoc! {"
+                SELECT name FROM pragma_table_info('threads') WHERE name = ?
+            "})?;
+            let results = check("agent_type".to_string())?;
+            !results.is_empty()
+        };
+
+        if !has_agent_type_column {
+            connection.exec(indoc! {"
+                ALTER TABLE threads ADD COLUMN agent_type TEXT
+            "})?()
+            .map_err(|e| anyhow!("Failed to add agent_type column: {}", e))?;
+        }
 
         let db = Self {
             executor,
@@ -330,6 +353,7 @@ impl ThreadsDatabase {
 
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
+        let agent_type = thread.agent_type.clone();
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -341,11 +365,11 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>, Option<String>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data, agent_type) VALUES (?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, title, updated_at, data_type, data))?;
+        insert((id.0, title, updated_at, data_type, data, agent_type))?;
 
         Ok(())
     }
@@ -357,18 +381,19 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select =
-                connection.select_bound::<(), (Arc<str>, String, String)>(indoc! {"
-                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
+                connection.select_bound::<(), (Arc<str>, String, String, Option<String>)>(indoc! {"
+                SELECT id, summary, updated_at, agent_type FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, summary, updated_at) in rows {
+            for (id, summary, updated_at, agent_type) in rows {
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    agent_type,
                 });
             }
 
