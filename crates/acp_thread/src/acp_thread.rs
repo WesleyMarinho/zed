@@ -1312,6 +1312,7 @@ impl AcpThread {
     }
 
     /// Estimate the total token usage based on message content
+    /// TODO: Consider implementing a dedicated estimate_content_length() method to avoid string allocation
     pub fn estimate_token_usage(&self, cx: &App) -> usize {
         self.entries
             .iter()
@@ -1339,6 +1340,7 @@ impl AcpThread {
     }
 
     /// Get the context limit based on the agent type
+    /// TODO: Consider using an enum for agent identifiers instead of string matching
     pub fn context_limit(&self) -> usize {
         match self.connection.telemetry_id() {
             "claude-code" => CLAUDE_CONTEXT_LIMIT,
@@ -1367,7 +1369,10 @@ impl AcpThread {
     fn generate_condensed_summary(&self, cx: &mut Context<Self>) -> Task<Result<String>> {
         let registry = LanguageModelRegistry::read_global(cx);
         let Some(configured_model) = registry.thread_summary_model() else {
-            return Task::ready(Err(anyhow::anyhow!("No thread summary model configured")));
+            return Task::ready(Err(anyhow::anyhow!(
+                "Automatic context condensation requires a thread summary model to be configured. \
+                 Please configure a thread summary model in your agent settings."
+            )));
         };
         
         let model = configured_model.model.clone();
