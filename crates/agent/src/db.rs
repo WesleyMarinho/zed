@@ -311,13 +311,22 @@ impl ThreadsDatabase {
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
-        // Add migration for existing databases
-        let migration_result = connection.exec(indoc! {"
-            ALTER TABLE threads ADD COLUMN agent_type TEXT
-        "})?();
-        
-        // Ignore error if column already exists
-        let _ = migration_result;
+        // Add migration for existing databases - only if column doesn't exist
+        // Check if column exists by querying table info
+        let has_agent_type_column = {
+            let mut check = connection.select_bound::<String, (String,)>(indoc! {"
+                SELECT name FROM pragma_table_info('threads') WHERE name = ?
+            "})?;
+            let results = check("agent_type".to_string())?;
+            !results.is_empty()
+        };
+
+        if !has_agent_type_column {
+            connection.exec(indoc! {"
+                ALTER TABLE threads ADD COLUMN agent_type TEXT
+            "})?()
+            .map_err(|e| anyhow!("Failed to add agent_type column: {}", e))?;
+        }
 
         let db = Self {
             executor,
