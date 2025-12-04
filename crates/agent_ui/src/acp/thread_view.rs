@@ -1027,11 +1027,74 @@ impl AcpThreadView {
         .detach();
     }
 
+    fn check_and_trigger_auto_condensation(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let settings = AgentSettings::get_global(cx);
+        
+        // Skip if auto-condensation is disabled
+        if !settings.auto_condense_enabled {
+            return false;
+        }
+
+        let Some(thread) = self.thread() else { 
+            return false;
+        };
+
+        // Skip if already condensing
+        if thread.read(cx).condensation_in_progress() {
+            return false;
+        }
+
+        // Get the context limit from the agent server
+        let context_limit = self.agent.context_limit();
+        
+        // If no context limit is known, don't auto-condense
+        let Some(max_tokens) = context_limit else {
+            return false;
+        };
+
+        // Update and get estimated token count
+        thread.update(cx, |thread, cx| {
+            thread.update_estimated_token_count(cx);
+        });
+        
+        let estimated_tokens = thread.read(cx).estimated_token_count();
+        let ratio = estimated_tokens as f32 / max_tokens as f32;
+        
+        // Check if we've exceeded the threshold
+        if ratio >= settings.auto_condense_threshold {
+            // Trigger condensation by creating a new thread with summary
+            // For now, we'll just log this and return true to indicate we need condensation
+            log::info!(
+                "Auto-condensation triggered: {}/{} tokens ({:.1}% of limit)",
+                estimated_tokens,
+                max_tokens,
+                ratio * 100.0
+            );
+            
+            // TODO: Actually implement the condensation flow
+            // This would involve:
+            // 1. Generating a summary of the current thread
+            // 2. Creating a new thread with the summary as context
+            // 3. Inserting a system message about the condensation
+            
+            return true;
+        }
+        
+        false
+    }
+
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else { return };
 
         if self.is_loading_contents {
             return;
+        }
+
+        // Check if auto-condensation should be triggered
+        if self.check_and_trigger_auto_condensation(window, cx) {
+            // For now, just show a warning - full implementation would create a new thread with summary
+            log::warn!("Context limit approaching - auto-condensation needed but not yet fully implemented");
+            // TODO: Implement full auto-condensation flow
         }
 
         self.history_store.update(cx, |history, cx| {
