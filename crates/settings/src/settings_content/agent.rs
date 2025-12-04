@@ -106,6 +106,14 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Enable automatic context condensation for external agents when approaching token limits.
+    ///
+    /// Default: true
+    pub auto_condense_context: Option<bool>,
+    /// Threshold (0.0 to 1.0) at which to trigger automatic context condensation.
+    ///
+    /// Default: 0.80
+    pub auto_condense_threshold: Option<f32>,
 }
 
 impl AgentSettingsContent {

@@ -1172,6 +1172,17 @@ impl AcpThreadView {
                     message_editor.clear(window, cx);
                 });
             })?;
+            
+            // Check if context needs to be condensed before sending
+            let condense_task = thread.update(cx, |thread, cx| {
+                thread.auto_condense_if_needed(cx)
+            })?;
+            
+            // Wait for condensation if needed
+            if let Some(condense_task) = condense_task {
+                condense_task.await.log_err();
+            }
+            
             let turn_start_time = Instant::now();
             let send = thread.update(cx, |thread, cx| {
                 thread.action_log().update(cx, |action_log, cx| {
@@ -1469,6 +1480,14 @@ impl AcpThreadView {
                     .replace(thread.read(cx).prompt_capabilities());
             }
             AcpThreadEvent::TokenUsageUpdated => {}
+            AcpThreadEvent::ContextCondensed => {
+                self.notify_with_sound(
+                    "Context was automatically condensed to continue the conversation",
+                    IconName::Repeat,
+                    window,
+                    cx,
+                );
+            }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
 

@@ -3,11 +3,12 @@ mod diff;
 mod mention;
 mod terminal;
 
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT};
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
 use language::language_settings::FormatOnSave;
+use language_model::LanguageModelRegistry;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
-use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use futures::{FutureExt, StreamExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
 use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
@@ -36,6 +37,25 @@ use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
+
+// Token estimation constants for automatic context condensation
+// Rough token estimation (4 chars ≈ 1 token)
+const CHARS_PER_TOKEN: usize = 4;
+
+// Default context limits for known agents
+const CLAUDE_CONTEXT_LIMIT: usize = 200_000;
+const CODEX_CONTEXT_LIMIT: usize = 128_000;
+const GEMINI_CONTEXT_LIMIT: usize = 200_000;
+const DEFAULT_CONTEXT_LIMIT: usize = 100_000;
+
+// Number of recent entries to keep during condensation (preserve last 2-3 exchanges)
+const RECENT_ENTRIES_TO_KEEP: usize = 6;
+
+// Token estimate for tool calls (smaller than messages)
+const TOOL_CALL_TOKEN_ESTIMATE: usize = 20;
+
+// Temperature for summary generation
+const SUMMARY_GENERATION_TEMPERATURE: f32 = 0.7;
 
 #[derive(Debug)]
 pub struct UserMessage {
@@ -865,6 +885,7 @@ pub enum AcpThreadEvent {
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
     ModeUpdated(acp::SessionModeId),
+    ContextCondensed,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1288,6 +1309,181 @@ impl AcpThread {
 
     pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {
         cx.emit(AcpThreadEvent::Retry(status));
+    }
+
+    /// Estimate the total token usage based on message content
+    /// TODO: Consider implementing a dedicated estimate_content_length() method to avoid string allocation
+    pub fn estimate_token_usage(&self, cx: &App) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let content_len = match entry {
+                    AgentThreadEntry::UserMessage(msg) => msg.content.to_markdown(cx).len(),
+                    AgentThreadEntry::AssistantMessage(msg) => msg
+                        .chunks
+                        .iter()
+                        .map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block } => block.to_markdown(cx).len(),
+                            AssistantMessageChunk::Thought { block } => block.to_markdown(cx).len(),
+                        })
+                        .sum::<usize>(),
+                    AgentThreadEntry::ToolCall(tool_call) => {
+                        // Estimate based on actual tool call content
+                        let markdown_len = tool_call.to_markdown(cx).len();
+                        // Use at least the minimum estimate if markdown is empty
+                        markdown_len.max(TOOL_CALL_TOKEN_ESTIMATE)
+                    }
+                };
+                content_len / CHARS_PER_TOKEN
+            })
+            .sum()
+    }
+
+    /// Get the context limit based on the agent type
+    /// TODO: Consider using an enum for agent identifiers instead of string matching
+    pub fn context_limit(&self) -> usize {
+        match self.connection.telemetry_id() {
+            "claude-code" => CLAUDE_CONTEXT_LIMIT,
+            "codex" => CODEX_CONTEXT_LIMIT,
+            "gemini-cli" => GEMINI_CONTEXT_LIMIT,
+            _ => DEFAULT_CONTEXT_LIMIT,
+        }
+    }
+
+    /// Check if context should be condensed based on current usage
+    pub fn should_condense(&self, cx: &App) -> bool {
+        let settings = AgentSettings::get_global(cx);
+        if !settings.auto_condense_context {
+            return false;
+        }
+
+        let usage = self.estimate_token_usage(cx);
+        let limit = self.context_limit();
+        // Clamp threshold to valid range [0.0, 1.0]
+        let threshold = settings.auto_condense_threshold.clamp(0.0, 1.0);
+        
+        (usage as f32 / limit as f32) >= threshold
+    }
+
+    /// Generate a condensed summary of the conversation
+    fn generate_condensed_summary(&self, cx: &mut Context<Self>) -> Task<Result<String>> {
+        let registry = LanguageModelRegistry::read_global(cx);
+        let Some(configured_model) = registry.thread_summary_model() else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Automatic context condensation requires a thread summary model to be configured. \
+                 Please configure a thread summary model in your agent settings."
+            )));
+        };
+        
+        let model = configured_model.model.clone();
+        
+        // Build the conversation history to summarize
+        let mut conversation = String::new();
+        for entry in &self.entries {
+            conversation.push_str(&entry.to_markdown(cx));
+            conversation.push('\n');
+        }
+
+        let prompt = format!(
+            "{}\n\nConversation to summarize:\n\n{}",
+            SUMMARIZE_THREAD_DETAILED_PROMPT, conversation
+        );
+
+        cx.spawn(async move |_this, cx| {
+            let request = language_model::LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                intent: None,
+                mode: None,
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: language_model::Role::User,
+                    content: vec![language_model::MessageContent::Text(prompt)],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                tools: vec![],
+                tool_choice: None,
+                stop: vec![],
+                temperature: Some(SUMMARY_GENERATION_TEMPERATURE),
+                thinking_allowed: false,
+            };
+
+            let mut response_stream = model.stream_completion(request, &cx).await?;
+            let mut summary = String::new();
+
+            while let Some(chunk) = response_stream.next().await {
+                match chunk {
+                    Ok(language_model::LanguageModelStreamEvent::Text(text)) => {
+                        summary.push_str(&text);
+                    }
+                    Ok(_) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+
+            Ok(summary)
+        })
+    }
+
+    /// Condense the context by replacing old messages with a summary
+    fn condense_with_summary(&mut self, summary: String, cx: &mut Context<Self>) {
+        if self.entries.len() <= RECENT_ENTRIES_TO_KEEP {
+            // Not enough entries to condense
+            return;
+        }
+
+        let split_point = self.entries.len().saturating_sub(RECENT_ENTRIES_TO_KEEP);
+        
+        // Create a summary message entry
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        
+        let summary_block = ContentBlock::new(
+            format!("**[Context Summary - Previous conversation condensed]**\n\n{}", summary).into(),
+            &language_registry,
+            path_style,
+            cx,
+        );
+        
+        // Both chunks and content contain the summary so that if this message is used
+        // in future context, the agent gets the full summary rather than just a marker.
+        let summary_text = format!("**[Context Summary - Previous conversation condensed]**\n\n{}", summary);
+        let summary_entry = AgentThreadEntry::UserMessage(UserMessage {
+            id: None,
+            content: summary_block,
+            chunks: vec![acp::ContentBlock::Text {
+                text: summary_text,
+            }],
+            checkpoint: None,
+        });
+
+        // Keep only recent entries and prepend with summary
+        let recent_entries: Vec<_> = self.entries.drain(split_point..).collect();
+        self.entries.clear();
+        self.entries.push(summary_entry);
+        self.entries.extend(recent_entries);
+
+        cx.notify();
+    }
+
+    /// Automatically condense context if needed before sending a message
+    pub fn auto_condense_if_needed(&mut self, cx: &mut Context<Self>) -> Option<Task<Result<()>>> {
+        if !self.should_condense(cx) {
+            return None;
+        }
+
+        let summary_task = self.generate_condensed_summary(cx);
+
+        Some(cx.spawn(async move |this, cx| {
+            let summary = summary_task.await?;
+
+            this.update(cx, |this, cx| {
+                this.condense_with_summary(summary, cx);
+                cx.emit(AcpThreadEvent::ContextCondensed);
+            })?;
+
+            Ok(())
+        }))
     }
 
     pub fn update_tool_call(
